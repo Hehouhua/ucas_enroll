@@ -1,0 +1,8 @@
+[info]
+username=your_user_name_here
+password=your_pasword_here
+
+[action]
+enroll=True
+evaluate=False
+
