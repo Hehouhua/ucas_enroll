@@ -1,8 +1,11 @@
 [info]
 username=your_user_name_here
 password=your_pasword_here
+sepuser="bWlkPTdjMDkxYWIwLWEzODEtNDI0ZS04ZmY4LTkzMGIxMWE4NTdhZA==  "
 
 [action]
 enroll=True
 evaluate=False
 
+[thread]
+thread=63

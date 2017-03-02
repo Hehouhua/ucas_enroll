@@ -25,22 +25,26 @@ import sys
 reload(sys)
 sys.setdefaultencoding('utf8')
 
+
 class UCASEvaluate(threading.Thread):
 	def __init__(self):
 		threading.Thread.__init__(self)
+		self.lock = threading.Lock()
 		self.__readCoursesId()
 		self.enrollCount = {}
 		cf= ConfigParser.RawConfigParser()
 		cf.read('config')
 		self.username=cf.get('info', 'username')
 		self.password=cf.get('info', 'password')
-		self.loginUrl="http://sep.ucas.ac.cn/slogin"#login ok
+		self.sepuser=cf.get('info', 'sepuser')
 		self.enroll = cf.getboolean('action', 'enroll')
 		self.evaluate = cf.getboolean('action', 'evaluate')
+		self.thread_count = int(cf.get("thread","thread"))
+		self.loginUrl="http://sep.ucas.ac.cn/slogin"#login ok
 		self.loginPage="http://sep.ucas.ac.cn"
 		self.courseSelectionPage="http://sep.ucas.ac.cn/portal/site/226/821"#进入选课系统
 		#self.studentCourseSelectionSystem="http://jwjz.ucas.ac.cn/Student/"
-		self.studentCourseIndentify="http://jwxk.ucas.ac.cn/login?Identity="
+		self.studentCourseIndentity="http://jwxk.ucas.ac.cn/login?Identity="
 		self.studentCourseTop="http://jwxk.ucas.ac.cn/courseManage/main"
 		self.studentCourseEvaluateUrl="http://jwjz.ucas.ac.cn/Student/DeskTopModules/"
 		self.selectCourseUrl = "http://jwxk.ucas.ac.cn/courseManage/selectCourse"
@@ -86,7 +90,20 @@ class UCASEvaluate(threading.Thread):
 		loginPage = self.s.get(self.loginPage, headers=self.headers,timeout=self.timeout)#http://sep.ucas.ac.cn
 		self.cookies = loginPage.cookies
 		self.courseId = open("courseid", "r").read().splitlines();
-
+	
+	def msg_handler(self,msg):
+		self.lock.acquire()
+		print(msg)
+		self.lock.release()
+	
+	def undate_select_count(self,course):
+		self.lock.acquire()		
+		if self.enrollCount.has_key(course):
+			self.enrollCount[course] += 1
+		else:
+			self.enrollCount[course] = 1
+		self.lock.release()
+		
 	def login(self):
 		postdata = {
 			'userName' : self.username,
@@ -94,16 +111,20 @@ class UCASEvaluate(threading.Thread):
 			'sb'	   : 'sb'
 		}
 		response = self.s.post(self.loginUrl, data=postdata, headers=self.headers,timeout=self.timeout)#http://sep.ucas.ac.cn/slogin
-		#print response.text
+		#self.msg_handler(response.text)
 		if self.s.cookies.get_dict().has_key('sepuser'):
 			return True
-		return False
+		#return False
+		self.msg_handler("Verify code needed.")
+		self.s.cookies['sepuser']=self.sepuser
+		#self.msg_handler(self.s.cookies)
+		return True
 	
 	def __readCoursesId(self):
 		coursesFile = open('./courseid', 'r')
 		self.coursesId = {}
 		for line in coursesFile.readlines():
-			line = line.strip().split('//')[0].strip().split(':')
+			line = line.strip().split('#')[0].strip().split(':')
 			courseId = line[0]
 			self.coursesId[courseId]={}
 			isDegree = False
@@ -116,29 +137,29 @@ class UCASEvaluate(threading.Thread):
 		response = self.s.get(delCourseUrl, headers=self.headers,timeout=self.timeout)
 		soup = BeautifulSoup(response.text,"html.parser")
 		if "删除成功" in response.text:
-			print soup.find(attrs={"id":"loginSuccess"}).get_text()
+			self.msg_handler(soup.find(attrs={"id":"loginSuccess"}).get_text())
 			self.coursesId[courseId]['alreadyDegree'] = self.coursesId[courseId]['isDegree']
 			return True
 		else :
-			print "Msg: ",courseId," ",soup.find(attrs={"id":"loginSuccess"}).get_text()
-			print soup.find(attrs={"id":"loginError"}).get_text()
+			self.msg_handler( "Msg: "+courseId+" "+soup.find(attrs={"id":"loginSuccess"}).get_text())
+			self.msg_handler( soup.find(attrs={"id":"loginError"}).get_text())
 			return False
 			
 	def enrollCourses(self):
 		response = self.s.get(self.courseSelectionPage, headers=self.headers,timeout=self.timeout)#http://sep.ucas.ac.cn/portal/site/226/821
 		soup = BeautifulSoup(response.text,"html.parser")
-		#print(response.text.encode('utf8'))
+		#self.msg_handler(response.text.encode('utf8'))
 		try:
 			indentity = str(soup.noscript).split('Identity=')[1].split('"'[0])[0]
-			coursePage = self.studentCourseIndentify + indentity#http://jwxk.ucas.ac.cn/login?Identity=
+			coursePage = self.studentCourseIndentity + indentity#http://jwxk.ucas.ac.cn/login?Identity=
 			response = self.s.get(coursePage,timeout=self.timeout)
 			response = self.s.get(self.studentCourseTop,timeout=self.timeout)#可以查看到选上的课
-			#print response.text
+			#self.msg_handler(response.text)
 			#action="/courseManage/selectCourse?s=505540ff-d5ca-4fba-a22f-048e8bbb07c4"
 			soup = BeautifulSoup(response.text,"html.parser")
 			self.urlSession = str(soup.find_all("form")[0]['action']).strip().split('=')[1]
 			all_selected = soup.body.table.tbody.find_all('tr')
-			print "urlSession: ",self.urlSession
+			self.msg_handler("urlSession: "+self.urlSession)
 			coursesId = self.coursesId.copy()
 			
 			while len(coursesId) > 0:
@@ -153,38 +174,36 @@ class UCASEvaluate(threading.Thread):
 									if "是" in selected.text:
 										isDegree=True
 										self.coursesId[eachCourse]['alreadyDegree']=isDegree
-										#print "%s 是学位课 " %eachCourse
+										#self.msg_handler("%s 是学位课 " %eachCourse)
 									elif "否" in selected.text:
 										isDegree=False
 										self.coursesId[eachCourse]['alreadyDegree']=isDegree
-										#print "%s 是非学位课" %eachCourse
+										#self.msg_handler "%s 是非学位课" %eachCourse
 									else:
-										print "Maybe Encoding Error,Please check."
+										self.msg_handler("Maybe Encoding Error,Please check.")
 										return
 									if self.coursesId[eachCourse]['isDegree']==isDegree:
-										print("course " + eachCourse + " is in your coursetable")
+										self.msg_handler("course " + eachCourse + " is in your coursetable")
 										del coursesId[eachCourse]
 										raise 
 					except:
 						continue
-					if self.enrollCount.has_key(eachCourse):
-						self.enrollCount[eachCourse] += 1
-					else:
-						self.enrollCount[eachCourse] = 1
+					self.undate_select_count(eachCourse)
 					try:
 						result = self.__enrollCourse(self.urlSession, eachCourse, self.coursesId[eachCourse]['isDegree'], self.enrollCount[eachCourse])
 						if result:
 							del coursesId[eachCourse]
 					except Exception as e:
-						print 'Error: ',e
+						self.msg_handler('Error: '+str(e))
 						pass
 		except Exception as e:
-			print("system error")
-			print e
+			self.msg_handler("system error")
+			self.msg_handler(str(e))
 			#self.enrollCourses()
 			pass
-		except KeyboardInterrupt:
-			print("Bye")
+		except KeyboardInterrupt,k:
+			self.msg_handler("Bye")
+			raise k
 	
 
 
@@ -194,7 +213,7 @@ class UCASEvaluate(threading.Thread):
 		saveCourseUrl = self.saveCourseUrl + "?s=" + urlSession
 		if self.coursesId[courseId].has_key('alreadyDegree'):#转换学位课非学位课，需要先退课
 			if self.coursesId[courseId]['alreadyDegree'] != self.coursesId[courseId]['isDegree']:
-				print courseId,"to change degree"
+				self.msg_handler(courseId+"to change degree")
 				if self.coursesId[courseId].has_key('sids'):
 					self.delCourse(courseId,self.coursesId[courseId]['sids'])
 		if self.coursesId[courseId].has_key('courseName') and self.coursesId[courseId].has_key('sids'):
@@ -205,7 +224,7 @@ class UCASEvaluate(threading.Thread):
 			postData['sids'] = code
 			if isDegree:#did_125739=125739
 				postData["did_"+code] = code
-			print("select " + courseName + "   " + str(count) + " times")
+			self.msg_handler("select " + courseName + "   " + str(count) + " times")
 		else:
 			postData={}
 			postData['deptIds']=self.dict[courseId[:2]]
@@ -213,7 +232,7 @@ class UCASEvaluate(threading.Thread):
 			response = self.s.post(selectCourseUrl,postData,timeout=self.timeout)#查看还可选的课
 			soup = BeautifulSoup(response.text,"html.parser")
 			dataTable = soup.body.form.table.tbody.find_all('tr')
-			#print (str)(dataTable)
+			#self.msg_handler((str)(dataTable))
 			courseName = "存放当前需要选择的课程"
 			for course in dataTable:
 				if courseId in course.text:
@@ -228,47 +247,47 @@ class UCASEvaluate(threading.Thread):
 					postData['sids'] = code
 					if isDegree:#did_125739=125739
 						postData["did_"+code] = code
-					print("select " + courseName + "   " + str(count) + " times")
+					self.msg_handler("select " + courseName + "   " + str(count) + " times")
 	
 		if 	postData.has_key('sb') :
-			print "no such course:" ,courseId
-			#print (str)(dataTable)
+			self.msg_handler("no such course:" +courseId)
+			#self.msg_handler (str)(dataTable)
 			#return True
 		
 		response = self.s.post(saveCourseUrl, data = postData,timeout=self.timeout)
 		soup = BeautifulSoup(response.text,"html.parser")
 		
 		if "选课成功" in response.text:
-			print soup.find(attrs={"id":"loginSuccess"}).get_text()
+			self.msg_handler(soup.find(attrs={"id":"loginSuccess"}).get_text())
 			return True
 		elif "选课失败" in response.text:
-			print soup.find(attrs={"id":"loginError"}).get_text()
+			self.msg_handler(soup.find(attrs={"id":"loginError"}).get_text())
 			return False
 		elif "时间冲突" in response.text:
-			print soup.find(attrs={"id":"loginError"}).get_text()
+			self.msg_handler(soup.find(attrs={"id":"loginError"}).get_text())
 			return False
 		else :#<label id="loginSuccess" class="success"></label>
-			#print "Msg: ",courseId
-			print "Msg: ",courseId," ",soup.find(attrs={"id":"loginSuccess"}).get_text()
-			print soup.find(attrs={"id":"loginError"}).get_text()
+			#self.msg_handler "Msg: ",courseId
+			self.msg_handler("Msg: "+courseId+" "+soup.find(attrs={"id":"loginSuccess"}).get_text())
+			self.msg_handler(soup.find(attrs={"id":"loginError"}).get_text())
 
 	def run(self):
-		#ucasEvaluate = UCASEvaluate()
-		if not self.login():
-			print('login error, please check your username and password')
-			exit()
-		print('login success')
-		if self.enroll:
-			print('Enrolling course...\n')
-			self.enrollCourses()
-		if self.evaluate:
-			print('Not Implemented yet...\n')
-
+		try:
+			for i in range(0,self.thread_count):
+				if not self.login():
+					self.msg_handler('login error, please check your username and password')
+					exit()
+				self.msg_handler('login success')
+				if self.enroll:
+					self.msg_handler('Enrolling course...\n')
+					self.enrollCourses()
+				if self.evaluate:
+					self.msg_handler('Not Implemented yet...\n')
+		except KeyboardInterrupt,k:
+			sys.exit(0)
+			
 if __name__=="__main__":
-	for i in range(0,2):
-		my_thread = UCASEvaluate()  
-		my_thread.start()
-		print "----------Thread " ,i ," starts----------------- "
-		time.sleep(5)
+	my_thread = UCASEvaluate()  
+	my_thread.run()
 
 
