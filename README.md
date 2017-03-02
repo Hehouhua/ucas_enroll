@@ -7,12 +7,12 @@
 
 > pip install requests
 
-请在config填入你的用户名和密码
+请在config填入你的用户名和密码以及登录sep后cookie的sepuser字段值
 
 enroll设置为true表示选课
 evaluate设置为true表示评教
 
-请在courseid文件中设置你需要选的课程
+请在courseid文件中设置你需要选的课程，可用#标记课程名称等信息
 > - 课程编号:on #表示该课程选择为学位课
 > - 课程编号 #表示普通选课
 > - 例如：
